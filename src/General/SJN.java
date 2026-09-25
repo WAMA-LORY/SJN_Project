@@ -146,7 +146,7 @@ public class SJN extends javax.swing.JFrame {
     }//GEN-LAST:event_Input_ProcessActionPerformed
 
     private void CalculateActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_CalculateActionPerformed
-                                                
+                                            
     javax.swing.table.DefaultTableModel model = (javax.swing.table.DefaultTableModel) ProcessTable.getModel();
     int rowCount = model.getRowCount();
 
@@ -155,142 +155,148 @@ public class SJN extends javax.swing.JFrame {
         return;
     }
 
-    java.util.Stack<Process> inputStack = new java.util.Stack<>();
+    // 2D Array: [rowCount][6]
+    // [i][0]: Process ID Number | [i][1]: Arrival Time | [i][2]: Burst Time
+    // [i][3]: Start Time       | [i][4]: Waiting Time | [i][5]: Done Flag (0 or 1)
+    int[][] proc = new int[rowCount][6];
 
-    // Read and validate table cell inputs
+    // 1. Read table inputs
     try {
         for (int i = 0; i < rowCount; i++) {
-            String pid = model.getValueAt(i, 0).toString();
-            int at = Integer.parseInt(model.getValueAt(i, 1).toString().trim());
-            int bt = Integer.parseInt(model.getValueAt(i, 2).toString().trim());
-
-            if (at < 0 || bt <= 0) {
-                javax.swing.JOptionPane.showMessageDialog(this, "Arrival Time must be >= 0 and Burst Time must be > 0.", "Input Error", javax.swing.JOptionPane.ERROR_MESSAGE);
-                return;
-            }
-            inputStack.push(new Process(pid, at, bt));
-        }
-    } catch (Exception ex) {
-        javax.swing.JOptionPane.showMessageDialog(this, "Please enter valid integers in all Arrival and Burst Time cells.", "Input Error", javax.swing.JOptionPane.ERROR_MESSAGE);
+            proc[i][0] = i + 1; // P1, P2, P3
+            proc[i][1] = Integer.parseInt(model.getValueAt(i, 1).toString().trim());//to need to turn the AT ToString and the parse the string to int and we trim the whitespace
+            proc[i][2] = Integer.parseInt(model.getValueAt(i, 2).toString().trim());//same here but BT
+        }   
+    } catch (Exception e) {
+        javax.swing.JOptionPane.showMessageDialog(this, "Please fill all table cells with valid numbers.", "Input Error", javax.swing.JOptionPane.ERROR_MESSAGE);
         return;
     }
 
-    // Sort arrival queue by Arrival Time
-    java.util.Queue<Process> arrivalQueue = new java.util.LinkedList<>();
-    java.util.List<Process> sortedList = new java.util.ArrayList<>();
-    while (!inputStack.isEmpty()) {
-        sortedList.add(inputStack.pop());
-    }
-    sortedList.sort(java.util.Comparator.comparingInt(p -> p.arrivalTime));
-    arrivalQueue.addAll(sortedList);
+    // Parallel arrays to record Gantt Chart execution order
+    int[] ganttPid = new int[rowCount];
+    int[] ganttStartTime = new int[rowCount];
+    int[] ganttEndTime = new int[rowCount];
+    int ganttIndex = 0;
 
-    java.util.List<Process> readyQueue = new java.util.ArrayList<>();
-    java.util.List<Process> completedProcesses = new java.util.ArrayList<>();
-    java.util.List<GanttBlock> ganttChart = new java.util.ArrayList<>();
+    int currentTime = 0;//what is the current amount of time that has passed aka the sum of burst time
+    int completed = 0;//
 
-    int currentTime = arrivalQueue.isEmpty() ? 0 : arrivalQueue.peek().arrivalTime;
+    while (completed < rowCount) {
+        int shortest = -1; 
+        int minBurst = Integer.MAX_VALUE;// set to max in value
 
-    // SJN Core Logic
-    while (completedProcesses.size() < rowCount) {
-        while (!arrivalQueue.isEmpty() && arrivalQueue.peek().arrivalTime <= currentTime) {
-            readyQueue.add(arrivalQueue.poll());
+        // Find the available process with the shortest burst time
+        for (int i = 0; i < rowCount; i++) {
+            if (proc[i][5] == 0 && proc[i][1] <= currentTime) { // proc[5] checking of the process is done
+                                                                //proc[1] checking if a AT is under or equal to the current time
+                    if (proc[i][2] < minBurst) {                // ill explain it this person its a bit hard to put on text
+                    minBurst = proc[i][2];
+                    shortest = i;
+                }
+            }
         }
 
-        if (readyQueue.isEmpty()) {
-            currentTime = arrivalQueue.peek().arrivalTime;
+        
+        if (shortest == -1) {
+            currentTime++;
             continue;
         }
 
-        readyQueue.sort(java.util.Comparator.comparingInt(p -> p.burstTime));
-        Process currentProcess = readyQueue.remove(0);
+        // Calculate Process Times
+        proc[shortest][3] = currentTime;                        // Start Time
+        proc[shortest][4] = proc[shortest][3] - proc[shortest][1]; // Waiting Time = Start - Arrival
+        currentTime += proc[shortest][2];                      // Advance clock by Burst Time
+        proc[shortest][5] = 1;                                  // Mark as done
+        completed++;                                            // add
 
-        currentProcess.startTime = currentTime;
-        currentProcess.waitingTime = currentProcess.startTime - currentProcess.arrivalTime;
-        currentTime += currentProcess.burstTime;
-
-        completedProcesses.add(currentProcess);
-        ganttChart.add(new GanttBlock(currentProcess.pid, currentProcess.startTime, currentTime));
+        // Record Gantt chart block values
+        ganttPid[ganttIndex] = proc[shortest][0];               //p1
+        ganttStartTime[ganttIndex] = proc[shortest][3];         // starttime
+        ganttEndTime[ganttIndex] = currentTime;                 
+        ganttIndex++;
     }
 
-    // Format output string for Outputfield
-    completedProcesses.sort((p1, p2) -> {
-        int id1 = Integer.parseInt(p1.pid.substring(1));
-        int id2 = Integer.parseInt(p2.pid.substring(1));
-        return Integer.compare(id1, id2);
-    });
+   
+    Outputfield.setText(""); //cleaner
 
-    StringBuilder sb = new StringBuilder();
-    sb.append("==================================================\n");
-    sb.append(" Process | Arrival | Burst | Start Time | Waiting \n");
-    sb.append("==================================================\n");
+    // header
+    Outputfield.append("==================================================\n");
+    Outputfield.append(" Process | Arrival | Burst | Start Time | Waiting \n");
+    Outputfield.append("==================================================\n");
 
     double totalWT = 0;
-    for (Process p : completedProcesses) {
-        totalWT += p.waitingTime;
-        sb.append(String.format("   %-5s |    %-4d |   %-3d |     %-6d |   %-4d\n",
-                p.pid, p.arrivalTime, p.burstTime, p.startTime, p.waitingTime));
+    for (int i = 0; i < rowCount; i++) {
+        totalWT += proc[i][4];
+        
+        // Format and append each row directly to the JTextArea
+        Outputfield.append(String.format("   P%-4d |    %-4d |   %-3d |     %-6d |   %-4d\n",
+                proc[i][0], proc[i][1], proc[i][2], proc[i][3], proc[i][4])); // the calculate Process times vars double check if hindi gets
     }
 
-    sb.append("==================================================\n");
-    sb.append(String.format("Average Waiting Time (AWT) : %.2f\n", (totalWT / completedProcesses.size())));
-    sb.append("==================================================\n\n");
+    // header
+    Outputfield.append("==================================================\n");
+    Outputfield.append(String.format("Average Waiting Time (AWT) : %.2f\n", (totalWT / rowCount)));
+    Outputfield.append("==================================================\n\n");
 
-    // Print Gantt Chart
-    sb.append("GANTT CHART:\n");
-    for (GanttBlock block : ganttChart) {
-        sb.append("+--------");
+    // print the header
+    Outputfield.append("GANTT CHART:\n");
+
+    // top line
+    for (int i = 0; i < ganttIndex; i++) {
+        Outputfield.append("+--------");
     }
-    sb.append("+\n");
+    Outputfield.append("+\n");// add a + :3
 
-    for (GanttBlock block : ganttChart) {
-        sb.append(String.format("|  %-5s ", block.pid));
+    // P1 and stuff
+    for (int i = 0; i < ganttIndex; i++) {
+        Outputfield.append(String.format("|  P%-4d ", ganttPid[i])); // the P1 and stuff
     }
-    sb.append("|\n");
+    Outputfield.append("|\n");
 
-    for (GanttBlock block : ganttChart) {
-        sb.append("+--------");
+    // line
+    for (int i = 0; i < ganttIndex; i++) {
+        Outputfield.append("+--------"); 
     }
-    sb.append("+\n");
+    Outputfield.append("+\n");
 
-    if (!ganttChart.isEmpty()) {
-        sb.append(ganttChart.get(0).startTime);
-        for (GanttBlock block : ganttChart) {
-            sb.append(String.format("%8d", block.endTime));
+    // the start time and stuff
+    if (ganttIndex > 0) {
+        Outputfield.append(String.valueOf(ganttStartTime[0]));
+        for (int i = 0; i < ganttIndex; i++) {
+            Outputfield.append(String.format("  %8d", ganttEndTime[i]));
         }
     }
-    sb.append("\n");
-
-    Outputfield.setText(sb.toString());
-
+    Outputfield.append("\n");
     }//GEN-LAST:event_CalculateActionPerformed
 
     private void ResetActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_ResetActionPerformed
-                                             
+                                 
     Input_Process.setText("");
-    javax.swing.table.DefaultTableModel model = (javax.swing.table.DefaultTableModel) ProcessTable.getModel();
+    javax.swing.table.DefaultTableModel model = (javax.swing.table.DefaultTableModel)  
+    ProcessTable.getModel();
     model.setRowCount(0);
     Outputfield.setText("");
-
     }//GEN-LAST:event_ResetActionPerformed
 
     private void SetProcessNumActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_SetProcessNumActionPerformed
                                        
     try {
-        int count = Integer.parseInt(Input_Process.getText().trim());
-        if (count <= 0) {
+        int count = Integer.parseInt(Input_Process.getText().trim()); // the trim remove the whites space if ever enterd
+        if (count <= 0) { // just cheacking if the entered count is 0 if yes gives a showmessage 
             javax.swing.JOptionPane.showMessageDialog(this, "Please enter a process count greater than 0.", "Input Error", javax.swing.JOptionPane.ERROR_MESSAGE);
-            return;
+            return; 
         }
 
-        javax.swing.table.DefaultTableModel model = (javax.swing.table.DefaultTableModel) ProcessTable.getModel();
+        javax.swing.table.DefaultTableModel model = (javax.swing.table.DefaultTableModel) 
+        ProcessTable.getModel(); // the javax.swing.table.DefaultTableMode gives us to .getmodel swithc basically gives us acess to munipulating the rows and columns
         model.setRowCount(0); // Clear existing rows
 
         for (int i = 1; i <= count; i++) {
-            model.addRow(new Object[]{"P" + i, "", ""});
+            model.addRow(new Object[]{"P" + i, "", ""});// we are just adding rows to model aka the processTable
         }
-    } catch (NumberFormatException e) {
+    } catch (Exception e) { // catch me them ballz
         javax.swing.JOptionPane.showMessageDialog(this, "Please enter a valid integer number of processes.", "Input Error", javax.swing.JOptionPane.ERROR_MESSAGE);
-    }
+    } 
 
     }//GEN-LAST:event_SetProcessNumActionPerformed
 
@@ -339,34 +345,4 @@ public class SJN extends javax.swing.JFrame {
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JTextField jTextField2;
     // End of variables declaration//GEN-END:variables
-// End of variables declaration                   
-
-    static class Process {
-        String pid;
-        int arrivalTime;
-        int burstTime;
-        int startTime;
-        int waitingTime;
-
-        public Process(String pid, int arrivalTime, int burstTime) {
-            this.pid = pid;
-            this.arrivalTime = arrivalTime;
-            this.burstTime = burstTime;
-        }
-    }
-
-    static class GanttBlock {
-        String pid;
-        int startTime;
-        int endTime;
-
-        public GanttBlock(String pid, int startTime, int endTime) {
-            this.pid = pid;
-            this.startTime = startTime;
-            this.endTime = endTime;
-        }
-    }
 }
-
-
-
